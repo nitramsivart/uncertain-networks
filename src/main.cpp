@@ -14,8 +14,11 @@
 #include "math.h"
 #include <gsl/gsl_rng.h>  // REPLACERNG
 #include "gsl/gsl_sf_gamma.h"
+#include <boost/program_options.hpp>
 
 using namespace std;
+
+namespace po = boost::program_options;
 
 struct Trio
 {
@@ -693,7 +696,7 @@ double Compute_Maxes(Trio* EdgeList, double*** current_message, double** group_m
     for (int k = 0; k < communities; k++)
     {
       omega_past[j][k] = omega[j][k];
-      if(isnan(omega_past[j][k]))
+      if(std::isnan(omega_past[j][k]))
         printf("omega_past[%d][%d] is nan\n", j,k);
     }
 
@@ -719,7 +722,7 @@ double Compute_Maxes(Trio* EdgeList, double*** current_message, double** group_m
       if (omega_past[j][k] >= 1e-10 && converged < fabs((omega[j][k] - omega_past[j][k]) / omega_past[j][k]))
       {
         converged = fabs((omega[j][k] - omega_past[j][k]) / omega_past[j][k]);
-        if(isnan(converged) || isnan(omega[j][k]) || isnan(omega_past[j][k]))
+        if(std::isnan(converged) || std::isnan(omega[j][k]) || std::isnan(omega_past[j][k]))
           printf("found a nan\n");
       }
     }
@@ -1130,39 +1133,35 @@ int main(int argc, char* argv[])
     degrees_present[int(degrees[i])] = true;
   }
 
-  // Whereas this used to be just the number of random starts on the E step, it's now random starts on the full EM algorithm
-  int restarts = 10;
-  if (argc > 4)
-  {
-    restarts = atoi(argv[4]);
-  }
+  po::options_description desc("Allowed options");
+  desc.add_options()
+    ("help", "show help")
+    ("cache_file,c", po::value<string>(&cache_file)->default_value(""), "cached input file containing edge list")
+    ("input_file,i", po::value<string>(&input_file)->default_value(""), "input file containing edge list")
+    ("output_file,o", po::value<string>(&output_file)->default_value(""), "output file for cascade statistics")
+    ("mean_offspring,m", po::value< std::vector<float> >(&mean_offspring)->multitoken(), "mean offspring used to set beta = mean_offspring / mean_degree")
+    ("offspring_alpha,a", po::value< std::vector<float> >(&offspring_alpha)->multitoken(), "exponent for power law distribution for mean offspring")
+    ("mean_offspring_uniform,u", po::value< std::vector<float> >(&mean_offspring_uniform)->multitoken(), "mean offspring used to set beta = mean_offspring / mean_degree")
+    ("num_cascades,n", po::value<unsigned>(&num_cascades)->default_value(100000), "number of cascades to generate")
+    ("size,s", po::value<unsigned>(&min_size)->default_value(1),"minimum cascade size for which stats will be written")
+    ("min_mean_offspring", po::value<float>(&min_mean_offspring)->default_value(0.1),"minimum mean offspring")
+    ("max_mean_offspring", po::value<float>(&max_mean_offspring)->default_value(1),"maximum mean offspring")
+    ("cascades_per_seed", po::value<int>(&cascades_per_seed)->default_value(1),"how many cascades are run from the same cascade seed")
+    ("EM_restarts", po::value<int>(&restarts)->default_value(10),"random restarts of the full EM algorithm");
+    ("EM_max_iterations", po::value<int>(&max_iterations)->default_value(20),"cap on number of EM iterations");
+    ("BP_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(0.001), "BP is considered converged when no message changes by more than this")
+    ("EM_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(5e-3), "EM is considered converged when no parameter changes by more than this")
+    ("zero_thresh", po::value<double>(&zero_thresh)->default_value(1e-50), "any number below this is considered to be zero")
 
 
-  // The program might cry and loop the EM algorithm infinitely unless you have a stopping condition somewhere.
-  int max_iterations = 20;
-  if (argc > 6)
-  {
-    max_iterations = atoi(argv[6]);
-  }
+  int restarts;
+  int max_iterations;
+  double message_converged_diff;
 
-  // For the convergence of the BP in the E step.
-  double message_converged_diff = 0.001;
-  if (argc > 7)
-  {
-    message_converged_diff = atof(argv[7]);
-  }
   // For overall EM convergence.
-  double converged_diff = 5e-3;
-  if (argc > 8)
-  {
-    converged_diff = atof(argv[8]);
-  }
+  double converged_diff;
 
-  double zero_thresh = 1e-50;
-  if (argc > 9)
-  {
-    zero_thresh = atof(argv[9]);
-  }
+  double zero_thresh;
 
 
 
@@ -1339,7 +1338,7 @@ int main(int argc, char* argv[])
       LL = Compute_Likelihood(EdgeList, group_membership, nKcount, omega, degrees, vertices, edges, communities);
     }
 
-    if (isnan(LL))
+    if (std::isnan(LL))
     {
       LL = -std::numeric_limits<float>::max();
     }
