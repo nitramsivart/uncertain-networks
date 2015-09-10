@@ -4,10 +4,9 @@
 
 #include <execinfo.h>
 #include <stdio.h>
-#include <string.h>
+#include <string>
 #include <assert.h>
 #include <iostream>
-#include <fstream>
 #include <cstdlib>
 #include <list>
 #include <limits>
@@ -15,676 +14,14 @@
 #include <gsl/gsl_rng.h>  // REPLACERNG
 #include "gsl/gsl_sf_gamma.h"
 #include <boost/program_options.hpp>
+#include "SBM.h"
+#include "DCSBM.h"
+#include <fstream>
 
 using namespace std;
 
 namespace po = boost::program_options;
 
-struct Trio
-{
-  int out;
-  int in;
-  double known;
-};
-
-
-// It's strange-looking, but this DOES give the right answer for x = 0, 1.
-// Returns log(x!) without overflow-style problems
-double log_factorial(int x)
-{
-  double result = 0;
-  for (int i = 1; i < x; i++)
-  {
-    result += log(double(i));
-  }
-  return result;
-}
-
-double entropy(double x)
-{
-  if (x == 0)
-  {
-    return 0;
-  }
-  return x * log(x);
-}
-
-
-/* The M step has to reflect the function pointers as well! */
-double SBM(const int adj_value, const double known, double& omega, double& k1, double& k2)
-{
-  if (adj_value == -1)
-  {
-    return 1;
-  }
-  // the below expression isn't defined for omega == 0, so we short circuit
-  if (omega == 0) {
-    //printf("short circuiting SBM\n");
-    return 0;
-  }
-  return exp(known * log(omega) + (1. - known) * log(1. - omega));
-}
-
-// This is the Poisson formulation, which is why it looks different than the one above.
-double DCSBM(const int adj_value, const double known, double& omega, double& k1, double& k2)
-{
-  if (adj_value == -1)
-  {
-    return 1;
-  }
-  // the below expression isn't defined for omega == 0, so we short circuit
-  if (omega == 0)
-    return 0;
-  return exp(known * log(k1 * omega * k2) - k1 * omega * k2);
-}
-
-
-
-
-/* M step initialization equations (can't assume the replica symmetric cavity equations since we don't have the messages) */
-void M_SBM_init(Trio* EdgeList, double*** current_message, double** group_membership, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double* nr = new double[communities];
-  double** denom = new double*[communities];
-  for (int i = 0; i < communities; i++)
-  {
-    nr[i] = 0;
-    denom[i] = new double[communities];
-    for (int j = 0; j < communities; j++)
-    {
-      denom[i][j] = 0;
-      omega[i][j] = 0;
-    }
-  }
-
-  for (int i = 0; i < vertices; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      nr[j] += group_membership[i][j];
-    }
-  }
-
-  for (int i = 0; i < edges; i++)
-  {
-    // Count towards m_rs
-    if (EdgeList[i].known)
-    {
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          // Edges are undirected. I'm only buffering each edge once, so I need to count it twice, once for each direction.
-          omega[j][k] += EdgeList[i].known * group_membership[EdgeList[i].out][j] * group_membership[EdgeList[i].in][k];
-          omega[j][k] += EdgeList[i].known * group_membership[EdgeList[i].in][j] * group_membership[EdgeList[i].out][k];
-        }
-      }
-    }
-  }
-
-  for (int j = 0; j < communities; j++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      denom[j][k] += nr[j] * nr[k];
-      if (denom[j][k] != 0)
-        omega[j][k] /= denom[j][k];
-      else
-        printf("denom is 0, %d, %d\n", j, k);
-    }
-  }
-
-  delete[] nr;
-  for (int j = 0; j < communities; j++)
-  {
-    delete[] denom[j];
-  }
-  delete[] denom;
-}
-
-
-void M_DCSBM_init(Trio* EdgeList, double*** current_message, double** group_membership, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double* kappar = new double[communities];
-  double** denom = new double*[communities];
-  for (int i = 0; i < communities; i++)
-  {
-    kappar[i] = 0;
-    denom[i] = new double[communities];
-    for (int j = 0; j < communities; j++)
-    {
-      denom[i][j] = 0;
-      omega[i][j] = 0;
-    }
-  }
-
-  for (int i = 0; i < vertices; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      kappar[j] += degrees[i] * group_membership[i][j];
-    }
-  }
-
-  for (int i = 0; i < edges; i++)
-  {
-    // Count towards m_rs
-    if (EdgeList[i].known)
-    {
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          // Edges are undirected. I'm only buffering each edge once, so I need to count it twice, once for each direction.
-          omega[j][k] += EdgeList[i].known * group_membership[EdgeList[i].out][j] * group_membership[EdgeList[i].in][k];
-          omega[j][k] += EdgeList[i].known * group_membership[EdgeList[i].in][j] * group_membership[EdgeList[i].out][k];
-        }
-      }
-    }
-  }
-
-  for (int j = 0; j < communities; j++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      denom[j][k] += kappar[j] * kappar[k];
-      if (denom[j][k] != 0)
-        omega[j][k] /= denom[j][k];
-    }
-  }
-
-  delete[] kappar;
-  for (int j = 0; j < communities; j++)
-  {
-    delete[] denom[j];
-  }
-  delete[] denom;
-}
-
-
-
-
-/* M step equations */
-void M_SBM(Trio* EdgeList, double*** current_message, double** group_membership, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double* nr = new double[communities];
-  double** denom = new double*[communities];
-  double** omega_old = new double*[communities];
-  double denom_color;
-  for (int i = 0; i < communities; i++)
-  {
-    omega_old[i] = new double[communities];
-    nr[i] = 0;
-    denom[i] = new double[communities];
-    for (int j = 0; j < communities; j++)
-    {
-      denom[i][j] = 0;
-      omega_old[i][j] = omega[i][j];
-      omega[i][j] = 0;
-    }
-  }
-
-  for (int i = 0; i < vertices; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      nr[j] += group_membership[i][j];
-    }
-  }
-
-  for (int i = 0; i < edges; i++)
-  {
-    // Count towards m_rs
-    if (EdgeList[i].known)
-    {
-      denom_color = 0;
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          denom_color += omega_old[j][k] * current_message[0][i][j] * current_message[1][i][k];
-        }
-      }
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          // Edges are undirected. I'm only buffering each edge once, so I need to count it twice, once for each direction.
-          omega[j][k] += EdgeList[i].known * omega_old[j][k] * current_message[0][i][j] * current_message[1][i][k] / denom_color;
-          omega[j][k] += EdgeList[i].known * omega_old[k][j] * current_message[0][i][k] * current_message[1][i][j] / denom_color;
-        }
-      }
-    }
-  }
-
-  for (int j = 0; j < communities; j++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      denom[j][k] += nr[j] * nr[k];
-      if (denom[j][k] != 0){
-        omega[j][k] /= denom[j][k];
-      }
-      else {
-        printf("setting omega to 0\n");
-        omega[j][k] = 0.;
-      }
-    }
-  }
-
-  delete[] nr;
-  for (int j = 0; j < communities; j++)
-  {
-    delete[] denom[j];
-    delete[] omega_old[j];
-  }
-  delete[] denom;
-  delete[] omega_old;
-}
-
-
-void M_DCSBM(Trio* EdgeList, double*** current_message, double** group_membership, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double* kappar = new double[communities];
-  double** denom = new double*[communities];
-  double** omega_old = new double*[communities];
-  double denom_color;
-  for (int i = 0; i < communities; i++)
-  {
-    omega_old[i] = new double[communities];
-    kappar[i] = 0;
-    denom[i] = new double[communities];
-    for (int j = 0; j < communities; j++)
-    {
-      denom[i][j] = 0;
-      omega_old[i][j] = omega[i][j];
-      omega[i][j] = 0;
-    }
-  }
-
-  for (int i = 0; i < vertices; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      kappar[j] += degrees[i] * group_membership[i][j];
-    }
-  }
-
-  for (int i = 0; i < edges; i++)
-  {
-    // Count towards m_rs
-    if (EdgeList[i].known)
-    {
-      denom_color = 0;
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          denom_color += degrees[EdgeList[i].out] * omega_old[j][k] * degrees[EdgeList[i].in] * exp(-degrees[EdgeList[i].out] * omega_old[j][k] * degrees[EdgeList[i].in]) * current_message[0][i][j] * current_message[1][i][k];
-        }
-      }
-
-
-      for (int j = 0; j < communities; j++)
-      {
-        for (int k = 0; k < communities; k++)
-        {
-          // Edges are undirected. I'm only buffering each edge once, so I need to count it twice, once for each direction.
-          omega[j][k] += EdgeList[i].known * degrees[EdgeList[i].out] * omega_old[j][k] * degrees[EdgeList[i].in] * exp(-degrees[EdgeList[i].out] * omega_old[j][k] * degrees[EdgeList[i].in]) * current_message[0][i][j] * current_message[1][i][k] / denom_color;
-          omega[j][k] += EdgeList[i].known * degrees[EdgeList[i].out] * omega_old[k][j] * degrees[EdgeList[i].in] * exp(-degrees[EdgeList[i].out] * omega_old[k][j] * degrees[EdgeList[i].in]) * current_message[0][i][k] * current_message[1][i][j] / denom_color;
-        }
-      }
-    }
-  }
-
-  for (int j = 0; j < communities; j++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      denom[j][k] += kappar[j] * kappar[k];
-      if (denom[j][k] != 0)
-        omega[j][k] /= denom[j][k];
-      else
-        omega[j][k] = 0.;
-    }
-  }
-
-  delete[] kappar;
-  for (int j = 0; j < communities; j++)
-  {
-    delete[] denom[j];
-    delete[] omega_old[j];
-  }
-  delete[] denom;
-  delete[] omega_old;
-}
-
-
-
-
-
-
-/* Computing the mean field approximation terms */
-void MF_SBM(double** degree_only, double** group_membership, double* degrees, double* missing_degrees, bool* degrees_present, double** omega, const int& vertices, const int& communities, double (*model)(const int, const double, double&, double&, double&))
-{
-  double part;
-  double zero = 0.0;
-  for (int j = 0; j < communities; j++)
-  {
-    degree_only[0][j] = 0;
-  }
-  for (int k = 0; k < communities; k++)
-  {
-    for (int i = 0; i < vertices; i++)
-    {
-      part = 0;
-      for (int j = 0; j < communities; j++)
-      {
-        // Not degree-specific, so just throw it whatever for the degree.
-        part += group_membership[i][j] * model(0, 0., omega[j][k], zero, degrees[i]);
-      }
-      if (part == 0)
-        part = 1e-10;
-      degree_only[0][k] += log(part);
-    }
-  }
-  return;
-}
-
-
-// Not actually a useful mean field algorithm. We have to do the full calculation since weighted degrees aren't integers
-void MF_DCSBM(double** degree_only, double** group_membership, double* degrees, double* missing_degrees, bool* degrees_present, double** omega, const int& vertices, const int& communities, double (*model)(const int, const double, double&, double&, double&))
-{
-  double part;
-  for (int i = 0; i < vertices; i++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      degree_only[i][k] = 0;
-    }
-
-    for (int k = 0; k < communities; k++)
-    {
-      for (int j = 0; j < vertices; j++)
-      {
-        part = 0;
-        for (int l = 0; l < communities; l++)
-        {
-          part += group_membership[j][l] * model(0, 0., omega[k][l], degrees[i], degrees[j]);
-        }
-        if (part == 0)
-          part = 1e-10;
-        degree_only[i][k] += log(part);
-      }
-    }
-  }
-  return;
-}
-
-
-// If the network is unweighted, you can make use of the mean field approximation
-void uMF_DCSBM(double** degree_only, double** group_membership, double* degrees, double* missing_degrees, bool* degrees_present, double** omega, const int& vertices, const int& communities, double (*model)(const int, const double, double&, double&, double&))
-{
-  double part;
-  double thisdegree;
-  for (int i = 0; i < vertices; i++)
-  {
-    thisdegree = i;
-    if (degrees_present[i])
-    {
-      for (int k = 0; k < communities; k++)
-      {
-        degree_only[i][k] = 0;
-      }
-
-      for (int k = 0; k < communities; k++)
-      {
-        for (int j = 0; j < vertices; j++)
-        {
-          part = 0;
-          for (int l = 0; l < communities; l++)
-          {
-            part += group_membership[j][l] * model(0, 0., omega[k][l], thisdegree, degrees[j]);
-          }
-          degree_only[i][k] += log(part);
-        }
-      }
-    }
-  }
-  return;
-}
-
-
-
-
-
-
-
-
-/* Returning the mean field approximation terms */
-double MFR_SBM(double** degree_only, const int& vertex, const int& community)
-{
-  return degree_only[0][community];
-}
-
-// Acts as the degree or the particular vertex, depending on whether the edges are weighted or not.
-double MFR_DCSBM(double** degree_only, const int& vertex, const int& community)
-{
-  return degree_only[vertex][community];
-}
-
-
-
-// Computes the full log-likelihood
-double LL_SBM(Trio* EdgeList, double** group_membership, double* nKcount, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double likelihood = 0;
-  // Should match nKcount since the function has converged, but it costs me nothing to calculate just in case.
-  double* nx = new double[communities];
-  for (int j = 0; j < communities; j++)
-  {
-    nx[j] = 0;
-    for (int i = 0; i < vertices; i++)
-    {
-      nx[j] += group_membership[i][j];
-
-      // Takes care of the entropy term.
-      likelihood -= entropy(group_membership[i][j]);
-    }
-
-    // Takes care of the prior term: Q(Z)log(P(Z))
-    if (nKcount[j])
-    {
-      likelihood += nx[j] * log(nKcount[j]);
-    }
-  }
-  // Edges and the missing chunk from the previous term.
-  for (int i = 0; i < edges; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      for (int k = 0; k < communities; k++)
-      {
-        if (!(omega[j][k] == 0 || omega[j][k] == 1))
-        {
-          likelihood += group_membership[EdgeList[i].out][j] * group_membership[EdgeList[i].in][k] * (EdgeList[i].known * log(omega[j][k]) + (1. - EdgeList[i].known ) * log(1. - omega[j][k]));
-        }
-      }
-    }
-  }
-
-  delete[] nx;
-  return likelihood;
-}
-
-
-double LL_DCSBM(Trio* EdgeList, double** group_membership, double* nKcount, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities)
-{
-  double likelihood = 0;
-  double* kappa = new double[communities];
-  // Should match nKcount since the function has converged, but it costs me nothing to calculate just in case.
-  double* nx = new double[communities];
-  for (int j = 0; j < communities; j++)
-  {
-    kappa[j] = 0;
-    nx[j] = 0;
-    for (int i = 0; i < vertices; i++)
-    {
-      kappa[j] += group_membership[i][j] * degrees[i];
-      nx[j] += group_membership[i][j];
-
-      // Takes care of the entropy term.
-      likelihood -= entropy(group_membership[i][j]);
-    }
-
-    // Takes care of the prior term: Q(Z)log(P(Z))
-    if (nKcount[j])
-    {
-      likelihood += nx[j] * log(nKcount[j]);
-    }
-  }
-
-  // Term in the exponent of the model. Simplified to save time.
-  for (int j = 0; j < communities; j++)
-  {
-    for (int k = 0; k < communities; k++)
-    {
-      likelihood -= kappa[j] * omega[j][k] * kappa[k];
-    }
-  }
-
-  // Edges and the missing chunk from the previous term.
-  for (int i = 0; i < edges; i++)
-  {
-    for (int j = 0; j < communities; j++)
-    {
-      for (int k = 0; k < communities; k++)
-      {
-        likelihood += group_membership[EdgeList[i].out][j] * group_membership[EdgeList[i].in][k] * (EdgeList[i].known * log(degrees[EdgeList[i].out] * degrees[EdgeList[i].in] * omega[j][k]) - degrees[EdgeList[i].out] * degrees[EdgeList[i].in] * omega[j][k]);
-      }
-    }
-  }
-
-  delete[] kappa;
-  delete[] nx;
-  return likelihood;
-}
-
-
-
-
-
-// Computes the number of vertices and edges in the network.
-void FindStats(int& vertices, long int& edges, ifstream& file)
-{
-  char* buffer;
-  long int entry1 = 0;
-  long int entry2 = 0;
-  string lineread;
-
-  while(std::getline(file, lineread)) // Read line by line
-  {
-    buffer = new char [lineread.size()+1];
-    strcpy(buffer, lineread.c_str());
-    sscanf(buffer, "%ld %ld %*s", &entry1, &entry2); // "%*s" ignores the rest of the line.
-    if (entry1 != entry2)
-    {
-      edges++;
-    }
-    if (entry1 > vertices)
-    {
-      vertices = entry1;
-    }
-    if (entry2 > vertices)
-    {
-      vertices = entry2;
-    }
-    delete[] buffer;
-  }
-  vertices++;
-  file.clear();
-  file.seekg(0, ios::beg);
-  return;
-}
-
-// Sets the network.
-void GetTheNetworkEdges(string fileName, int lines, Trio* EdgeList, double* degrees, double* missing_degrees, const int edges, const bool unweighted_degree)
-{
-  ifstream InputFile;
-  string lineread;
-  char *buffer;
-  int count_edge = 0;
-  long int entry1 = 0;
-  long int entry2 = 0;
-  float entry3 = 0;
-
-  InputFile.open(fileName.c_str());
-  if (!InputFile)
-  {
-    cout << "Error in opening file";
-    cin.get();
-    return;
-  }
-
-  // DON'T COUNT THE DEGREES FOR THE UNKNOWN EDGES!!! The estimation of the omega matrix uses the *OBSERVED* degree
-  while(count_edge < edges && std::getline(InputFile, lineread)) // Read line by line
-  {
-    buffer = new char [lineread.size()+1];
-    strcpy(buffer, lineread.c_str());
-    // weighted case
-    // put a ! here if we want this to be the mean field for the unweighted case
-    // no ! means that we will be doing the mean field for the weighted case, by counting actual
-    // 		weights even though we've told it not too
-    if (lines > 2 && !unweighted_degree)
-    {
-      sscanf(buffer, "%ld %ld %f %*s", &entry1, &entry2, &entry3);
-      if (entry1 != entry2)
-      {
-        EdgeList[count_edge].out = entry1;
-        EdgeList[count_edge].in = entry2;
-        EdgeList[count_edge].known = entry3;
-
-        if (EdgeList[count_edge].known)
-        {
-          degrees[entry1] += entry3;
-          degrees[entry2] += entry3;
-        }
-        else
-        {
-          missing_degrees[entry1]++;
-          missing_degrees[entry2]++;
-        }
-      }
-      else
-      {
-        count_edge--;
-      }
-    }
-    else
-    {
-      sscanf(buffer, "%ld %ld %*s", &entry1, &entry2);
-      if (entry1 != entry2)
-      {
-        EdgeList[count_edge].out = entry1;
-        EdgeList[count_edge].in = entry2;
-        EdgeList[count_edge].known = 1.;
-
-        degrees[entry1]++;
-        degrees[entry2]++;
-      }
-      else
-      {
-        count_edge--;
-      }
-    }
-
-    delete[] buffer;
-    count_edge++;
-  }
-  InputFile.close();
-
-  return;
-}
 
 
 double Compute_Maxes(Trio* EdgeList, double*** current_message, double** group_membership, double* nKcount, double** omega, double* degrees, const int& vertices, const int& edges, const int& communities, void (*M_model)(Trio*, double***, double**, double**, double*, const int&, const int&, const int&))
@@ -979,7 +316,7 @@ bool Sort_list_probability(Trio& a, Trio& b)
 }
 
 // current assumption: if original edge probability was 0, we aren't gonna predict an edge.
-void predict_edges(Trio* EdgeList, double*** current_message, double** omega, double* degrees, const int& edges, const int& communities, double (*model)(const int, const double, double&, double&, double&), char * out_file_name) {
+void predict_edges(Trio* EdgeList, double*** current_message, double** omega, double* degrees, const int& edges, const int& communities, double (*model)(const int, const double, double&, double&, double&), string out_file_name) {
   list<Trio> MissingEdgeList;
   for (int i = 0; i < edges; i++) {
     Trio edge = EdgeList[i];
@@ -1092,21 +429,46 @@ int main(int argc, char* argv[])
   T = gsl_rng_default;
   gsl_rng* numgen = gsl_rng_alloc (T);
 
-  int communities = atoi(argv[2]);
-  ifstream InputFile;
-  InputFile.open(argv[1]);
-  if (!InputFile)
+
+  int restarts, max_iterations, communities, lines;
+  string input_file_name, out_file_name;
+  double message_converged_diff, converged_diff, zero_thresh;
+
+  po::options_description desc("Allowed options");
+  desc.add_options()
+    ("help", "show help")
+    ("input_file,i", po::value<string>(&input_file_name)->default_value(""), "input file containing edge list")
+    ("communities,c", po::value<int>(&communities)->default_value(2), "number of communities to detect")
+    ("lines,l", po::value<int>(&lines)->default_value(2), "number of columns in the edge file. allows one to specify a certain network")
+    ("out_file,o", po::value<string>(&out_file_name)->default_value(""), "file to output communities to")
+    ("EM_restarts", po::value<int>(&restarts)->default_value(10),"random restarts of the full EM algorithm")
+    ("EM_max_iterations", po::value<int>(&max_iterations)->default_value(20),"cap on number of EM iterations")
+    ("BP_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(0.001), "BP is considered converged when no message changes by more than this")
+    ("EM_convergence_thresh", po::value<double>(&converged_diff)->default_value(5e-3), "EM is considered converged when no parameter changes by more than this")
+    ("zero_thresh", po::value<double>(&zero_thresh)->default_value(1e-50), "any number below this is considered to be zero");
+
+  po::variables_map vm;
+  po::store(po::parse_command_line(argc, argv, desc), vm);
+  po::notify(vm);
+    
+  /* show help and exit */
+  if (vm.count("help") || input_file_name == "" || out_file_name == "") {
+    cout << desc << "\n";
+    return 1;
+  }
+
+  
+
+  std::ifstream input_file;
+  input_file.open(input_file_name);
+  if (!input_file)
   {
     cout << "Error in opening file";
     cin.get();
     return 0;
   }
-  FindStats(vertices, edges, InputFile);
-  InputFile.close();
-  if (argc > 8)
-  {
-    vertices = atoi(argv[8]);
-  }
+  FindStats(vertices, edges, input_file);
+  input_file.close();
 
   Trio* EdgeList = new Trio[edges];
   // This is the OBSERVED degree. The actual expected degree could be something different, depending on the number of unobserved vertex pairs.
@@ -1122,7 +484,7 @@ int main(int argc, char* argv[])
     missing_degrees[i] = 0;
   }
 
-  GetTheNetworkEdges(string(argv[1]), atoi(argv[3]), EdgeList, degrees, missing_degrees, edges, unweighted_degree);
+  GetTheNetworkEdges(input_file_name, lines, EdgeList, degrees, missing_degrees, edges, unweighted_degree);
 
   // This is only useful if the degrees are already integers (i.e. the network is unweighted).
   for (int i = 0; i < vertices; i++)
@@ -1133,35 +495,6 @@ int main(int argc, char* argv[])
     degrees_present[int(degrees[i])] = true;
   }
 
-  po::options_description desc("Allowed options");
-  desc.add_options()
-    ("help", "show help")
-    ("cache_file,c", po::value<string>(&cache_file)->default_value(""), "cached input file containing edge list")
-    ("input_file,i", po::value<string>(&input_file)->default_value(""), "input file containing edge list")
-    ("output_file,o", po::value<string>(&output_file)->default_value(""), "output file for cascade statistics")
-    ("mean_offspring,m", po::value< std::vector<float> >(&mean_offspring)->multitoken(), "mean offspring used to set beta = mean_offspring / mean_degree")
-    ("offspring_alpha,a", po::value< std::vector<float> >(&offspring_alpha)->multitoken(), "exponent for power law distribution for mean offspring")
-    ("mean_offspring_uniform,u", po::value< std::vector<float> >(&mean_offspring_uniform)->multitoken(), "mean offspring used to set beta = mean_offspring / mean_degree")
-    ("num_cascades,n", po::value<unsigned>(&num_cascades)->default_value(100000), "number of cascades to generate")
-    ("size,s", po::value<unsigned>(&min_size)->default_value(1),"minimum cascade size for which stats will be written")
-    ("min_mean_offspring", po::value<float>(&min_mean_offspring)->default_value(0.1),"minimum mean offspring")
-    ("max_mean_offspring", po::value<float>(&max_mean_offspring)->default_value(1),"maximum mean offspring")
-    ("cascades_per_seed", po::value<int>(&cascades_per_seed)->default_value(1),"how many cascades are run from the same cascade seed")
-    ("EM_restarts", po::value<int>(&restarts)->default_value(10),"random restarts of the full EM algorithm");
-    ("EM_max_iterations", po::value<int>(&max_iterations)->default_value(20),"cap on number of EM iterations");
-    ("BP_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(0.001), "BP is considered converged when no message changes by more than this")
-    ("EM_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(5e-3), "EM is considered converged when no parameter changes by more than this")
-    ("zero_thresh", po::value<double>(&zero_thresh)->default_value(1e-50), "any number below this is considered to be zero")
-
-
-  int restarts;
-  int max_iterations;
-  double message_converged_diff;
-
-  // For overall EM convergence.
-  double converged_diff;
-
-  double zero_thresh;
 
 
 
@@ -1387,7 +720,7 @@ int main(int argc, char* argv[])
       ofstream out_file;
       if (argc > 5)
       {
-        out_file.open(argv[5]);
+        out_file.open(out_file_name);
       }
       if (out_file.is_open())
       {
@@ -1413,7 +746,7 @@ int main(int argc, char* argv[])
   }
 
   if(predict_edges_flag == true)
-    predict_edges(EdgeList, best_message, omega, degrees, edges, communities, model, argv[5]);
+    predict_edges(EdgeList, best_message, omega, degrees, edges, communities, model, out_file_name);
 
 
   for (int i = 0; i < communities; i++)
