@@ -10,17 +10,35 @@
 #include "math.h"
 #include "utils.h"
 
-// It's strange-looking, but this DOES give the right answer for x = 0, 1.
-// Returns log(x!) without overflow-style problems
-double log_factorial(int x)
-{
-  double result = 0;
-  for (int i = 1; i < x; i++)
-  {
-    result += log(double(i));
+
+void check(double num, string str) {
+  if(isnan(num)) {
+    printf("found nan!!!!");
+    cout << str << "\n";
+    exit(0);
   }
-  return result;
+  if(isinf(num)) {
+    printf("found inf!!!!");
+    cout << str << "\n";
+    exit(0);
+  }
+  return;
+  if(0 == num) {
+    printf("found zero!!!!");
+    cout << str << "\n";
+    //exit(0);
+  }
 }
+bool check_zero(double num, string str, double omega, double m1, double m2) {
+  if(0 == num) {
+    printf("found zero!!!!");
+    //cout << str << " " << omega << " " << m1 << " " << m2 << "\n";
+    //exit(0);
+    return false;
+  }
+  return true;
+}
+
 
 double entropy(double x)
 {
@@ -31,8 +49,14 @@ double entropy(double x)
   return x * log(x);
 }
 
+// calculates q_rs^ij
+double SBM_joint_marginal(double omega, double Q, double m1, double m2) {
+  return (omega * Q + edge_ratio * (1-omega) * (1-Q)) * m1 * m2;
+}
+
+
 // Computes the number of vertices and edges in the network.
-void FindStats(int& vertices, long int& edges, ifstream& file)
+void FindStats(unsigned long& vertices, unsigned long& edges, ifstream& file)
 {
   char* buffer;
   long int entry1 = 0;
@@ -64,8 +88,28 @@ void FindStats(int& vertices, long int& edges, ifstream& file)
   return;
 }
 
+// Returns the sum of all edge weights
+// vertices MUST be initialized
+double GetEdgeSum(double* degrees)
+{
+  double total = 0;
+  for(unsigned long i; i < vertices; i++) {
+    total += degrees[i];
+  }
+  return total / 2;
+}
+
+// Get edges / nonedges, corresponding to the constant C from the paper
+// vertices MUST be initialized
+double GetEdgeRatio(double* degrees)
+{
+  double edge_count = GetEdgeSum(degrees);
+  double nonedge_count = vertices * (vertices - 1) / 2. - edge_count;
+  return edge_count / nonedge_count;
+}
+
 // Sets the network.
-void GetTheNetworkEdges(string fileName, int lines, Trio* EdgeList, double* degrees, double* missing_degrees, const int edges, const bool unweighted_degree)
+void GetTheNetworkEdges(string fileName, int lines, Trio* EdgeList, double* degrees, double* missing_degrees)
 {
   ifstream InputFile;
   string lineread;

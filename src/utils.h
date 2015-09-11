@@ -22,16 +22,26 @@ struct Trio
   double known;
 };
 
-// It's strange-looking, but this DOES give the right answer for x = 0, 1.
-// Returns log(x!) without overflow-style problems
-double log_factorial(int);
+// These GLOBAL variables are defined at program initialization, in main.cpp
+extern unsigned long vertices, edges;
+extern unsigned communities;
+extern double edge_ratio, edge_sum, message_converged_diff, zero_thresh;
+extern bool unweighted_degree;
+
+void check(double num, string str);
+bool check_zero(double num, string str, double omega, double m1, double m2);
 
 double entropy(double);
 
+double SBM_joint_marginal(double omega, double Q, double m1, double m2);
+
 // Computes the number of vertices and edges in the network.
-void FindStats(int&, long int&, ifstream&);
+void FindStats(unsigned long&, unsigned long&, ifstream&);
+
+double GetEdgeRatio(double* degrees);
+double GetEdgeSum(double* degrees);
 
 // Sets the network.
-void GetTheNetworkEdges(string, int, Trio*, double*, double*, const int, const bool);
+void GetTheNetworkEdges(string, int, Trio*, double*, double*);
 
 #endif
