@@ -4,6 +4,7 @@ Cpp files for running belief propagation can be found in src. Currently the only
 
 
 Must have installed:
+- git
 - A C++ compiler (default is g++).
 - Boost program_options
 - python3 (I use python3.4. python2 should work, but code might need tweaking)
@@ -11,6 +12,7 @@ Must have installed:
 
 
 Steps to run:
+- Clone this repository to your computer: "git clone https://github.com/tbmbob/uncertain-networks.git"
 - Compile bp: "make -C src"
 - Run on real world datasets with "./run_real.py -i data/protein.edges -k 4"
 - Try generating synthetic networks and then running bp with "./run_synthetic.py"
