@@ -2,7 +2,8 @@
 # doesn't allow self edges
 #
 # Written by Mark Newman  2 JUL 2014
-# Modified by TravisMartin  31 Jul 2014
+# Modified by Travis Martin  31 Jul 2014
+# Modified by Travis Martin  11 Sep 2015
 
 from numpy import ones,array
 from random import randrange
@@ -12,8 +13,8 @@ from networkx import Graph
 
 # n is total number of nodes
 def fast_sbm(c_in, c_out, n):
-  mav_in = c_in * n / 2
-  mav_out = c_out * n
+  mav_in = c_in * n / 4.
+  mav_out = c_out * n / 2.
 
   m_in1 = poisson.rvs(mav_in)
   m_in2 = poisson.rvs(mav_in)

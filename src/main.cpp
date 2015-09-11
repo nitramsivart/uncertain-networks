@@ -1,6 +1,4 @@
 // Computes the EM algorithm (using belief-propagation for the E step) for Kullback-Leibler divergence derived stochastic blockmodels.
-// The base programming allows you to program in a mean-field approximation if you know how to. Unfortunately, the degree corrected stochastic blockmodel doesn't have an easy one that we can think of.
-//  The standard stochastic blockmodel is programmed correctly, however.
 
 #include <execinfo.h>
 #include <stdio.h>
@@ -624,7 +622,7 @@ int main(int argc, char* argv[])
   for (int thisiteration = 0; thisiteration < restarts; thisiteration++)
   {	
     // Begin (randomized) initialization steps
-    printf("iteration %d\n", thisiteration);
+    printf("EM Algorithm Restart # %d\n", thisiteration);
     for (unsigned j = 0; j < communities; j++)
     {
       nKcount[j] = 0;
@@ -693,19 +691,7 @@ int main(int argc, char* argv[])
 
     // Start with the M step. Except this should be the non-BP version, whereas the full EM algorithm one should include the messages as expected.
     double converged = Compute_Maxes(false, EdgeList, current_message, group_membership, nKcount, omega, degrees, M_model_init);
-    printf("Init omega!\n");
-    for(unsigned i=0; i < communities; i++) {
-      for(unsigned j=0; j < communities; j++) {
-        cout << omega[i][j] << "\t";
-      }
-      cout << "\n";
-    }
-    cout << "gamma\n";
-
-    for(unsigned i = 0; i < communities; i++) {
-      cout << nKcount[i] << "\t";
-    }
-    cout << endl;
+    printf("Initializing parameters\n");
 
     converged = converged_diff * 4;
     for (unsigned i = 0; i < communities; i++)
@@ -723,16 +709,10 @@ int main(int argc, char* argv[])
     {
       while (converged > converged_diff && EMiterations < max_iterations)
       {
-        printf("converged %f, EMiteration %d\n", converged, EMiterations);
+        printf("Smallest (multiplicative) change: %f, Inner loop iteration # %d\n", converged, EMiterations);
         BP_algorithm(EdgeList, group_membership, general_message, current_message, former_message, nKcount, omega, degree_only, degrees, missing_degrees, degrees_present, model, MF_Precompute, MF_Return);
         converged = Compute_Maxes(true, EdgeList, current_message, group_membership, nKcount, omega, degrees, M_model);
-        for(unsigned i=0; i < communities; i++) {
-          for(unsigned j=0; j < communities; j++) {
-            cout << omega[i][j] << "\t";
-          }
-          cout << "\n";
-        }
-        cout << "gamma\n";
+        cout << "block memberships: \n";
 
         for(unsigned i = 0; i < communities; i++) {
           cout << nKcount[i] << "\t";

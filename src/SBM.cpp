@@ -171,14 +171,6 @@ void M_SBM(Trio* EdgeList, double*** current_message, double** group_membership,
         }
       }
     }
-
-    for(unsigned i=0; i < communities; i++) {
-      for(unsigned j=0; j < communities; j++) {
-        //check(omega[i][j], "omega");
-        cout << omega[i][j] << "\t";
-      }
-      cout << "\t" << counter << "\n";
-    }
   }
 
 
