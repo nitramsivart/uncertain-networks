@@ -18,7 +18,8 @@ Steps to run:
 - Try generating synthetic networks and then running bp with "./run_synthetic.py"
 
 
-Results are stored in the ./out folder. The 7th column of out/results.py contains information on community recovery - what fraction of nodes have the correct community predicted by belief propagation.
+Results are stored in the ./out folder. The 7th column of out/results.txt contains information on community recovery - what fraction of nodes have the correct community predicted by belief propagation. Found communities are stored in ./out/[edgelist-filename].out. Each row corresponds to a node (corresponding to the node index in the input edgelist), and each column corresponds to a community. Entries give the fraction that a given node is in a given community.
+
 
 
 Get help on various methods using:
