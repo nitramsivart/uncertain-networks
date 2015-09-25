@@ -22,7 +22,7 @@ def main(file_name, comm_count = 2, DC=False, i=0):
     out_file = file_name.replace('data/', '')
     out_file = 'out/' + out_file.replace('.edges', '') + '.out'
 
-    os.system('%s -i %s -o %s -c %d -l %d -n %d' % (bp_uncertain, file_name, out_file, comm_count, 3, trials))
+    os.system('%s -i %s -o %s -c %d -l %d -n %d -d %r' % (bp_uncertain, file_name, out_file, comm_count, 3, trials, DC))
 
 
 if __name__ == '__main__':
@@ -30,13 +30,14 @@ if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option('-i', type=str, dest = 'file_name', help='input file name', default='data/protein.edges')
     parser.add_option('-k', type=int, dest = 'comm_count', help='number of communities', default=2)
+    parser.add_option('-d', action='store_true', dest='degree_corrected', default=False)
     parser.add_option('--iters', type=int, help='number of instances to run, multithreaded', default = 1)
 
     (options, _) = parser.parse_args()
 
     ps = []
     for i in range(options.iters):
-        p = Process(target=main, args = (options.file_name, options.comm_count, i))#c_cc, c_cp, x, n, i))
+        p = Process(target=main, args = (options.file_name, options.comm_count, options.degree_corrected, i))#c_cc, c_cp, x, n, i))
         ps.append(p)
         p.start()
     for p in ps:

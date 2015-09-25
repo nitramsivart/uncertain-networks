@@ -1,4 +1,8 @@
-// Computes the EM algorithm (using belief-propagation for the E step) for Kullback-Leibler divergence derived stochastic blockmodels.
+// Compute community assignments and recover links using Max Likelihood fitting to the Stochastic Blockmodel
+// Allows standard unweighted networks as well as *uncertain* networks with probabilistic links, as per: http://arxiv.org/abs/1506.05490
+// Also fits to the Degree Corrected SBM.
+// This code is under active development.
+// Code by Brian Ball and Travis Martin, Sept 2015
 
 #include <execinfo.h>
 #include <stdio.h>
@@ -8,29 +12,30 @@
 #include <cstdlib>
 #include <list>
 #include <limits>
+#include <fstream>
 #include "math.h"
 #include <boost/program_options.hpp>
 #include "SBM.h"
 #include "DCSBM.h"
-#include <fstream>
 
 using namespace std;
 
+// used for accepting command line input
 namespace po = boost::program_options;
 
 
 double ERROR = 1e-10;
 
-bool unweighted_degree; // THIS IS A GLOBAL VARIABLE
+// These are GLOBAL VARIABLES
+bool unweighted_degree; 
 unsigned long vertices;
 unsigned long edges;
 unsigned communities;
 double edge_ratio, edge_sum, message_converged_diff, zero_thresh;
 
-
+// This is the M step of the EM algorithm. Given a posterior distribution of group membership, compute the affinity matrix and community memmbership priors.
 double Compute_Maxes(bool not_init, Trio* EdgeList, double*** current_message, double** group_membership, double* nKcount, double** omega, double* degrees, void (*M_model)(Trio*, double***, double**, double**, double*))
 {
-  //// POTENTIAL FOR MEMORY LEAK
   double** omega_past = new double*[communities];
   double converged = 0;
 
@@ -44,19 +49,12 @@ double Compute_Maxes(bool not_init, Trio* EdgeList, double*** current_message, d
         printf("omega_past[%d][%d] is nan\n", j,k);
     }
 
-    // should only use this for the simulated SBM
-    //nKcount[j] = .5;
     nKcount[j] = 0;
-    // the follwing is for real world stuff
     for (unsigned long i = 0; i < vertices; i++)
     {
       nKcount[j] += group_membership[i][j];
-      //if(not_init)
-        //printf("group memb: %f\n", group_membership[i][j]);
     }
-    //printf("nKcount, vertices: %f, %d\n", nKcount[j], vertices);
     nKcount[j] /= double(vertices);
-    //nKcount[j] = .5;
   }
 
   M_model(EdgeList, current_message, group_membership, omega, degrees);
@@ -70,18 +68,11 @@ double Compute_Maxes(bool not_init, Trio* EdgeList, double*** current_message, d
       {
         converged = fabs((omega[j][k] - omega_past[j][k]) / omega_past[j][k]);
         if(std::isnan(converged) || std::isnan(omega[j][k]) || std::isnan(omega_past[j][k]))
-          printf("found a nan\n");
+          printf("division by zero occurred while computing omega\n");
       }
     }
   }
 
-  //omega[0][0] = max(omega[0][0], omega[1][1]);
-  //omega[1][1] = max(omega[0][0], omega[1][1]);
-
-  //omega[0][0] = 0.04;
-  //omega[1][1] = 0.04;
-  //omega[0][1] = 0.028;
-  //omega[1][0] = 0.028;
 
   for (unsigned j = 0; j < communities; j++)
   {
@@ -94,11 +85,7 @@ double Compute_Maxes(bool not_init, Trio* EdgeList, double*** current_message, d
 }
 
 
-
-
-
-
-
+// This method does the heavy hitting belief propagation: iteratively pass messages between nodes until the messages converge.
 // For the messages, the first index (0) is for "out" sending to "in". (1) is for "in" sending to "out" (remember this is NOT symmetric!)
 void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_message, double*** current_message, double*** former_message, double* nKcount, double** omega, double** degree_only, double* degrees, double* missing_degrees, bool* degrees_present, double (*model)(const int, const double, double&, double&, double&), void (*MF_Precompute)(double**, double**, double*, double*, bool*, double**, double(const int, const double, double&, double&, double&)), double (*MF_Return)(double**, const int&, const int&))
 {
@@ -122,6 +109,7 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
   while (max_diff > message_converged_diff && iteration < 20)
   {
     iteration++;
+
     // Pre-precompute the mean-field approximated term.
     MF_Precompute(degree_only, group_membership, degrees, missing_degrees, degrees_present, omega, model);
 
@@ -138,8 +126,6 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
         else
         {
           general_message[i][j] = MF_Return(degree_only, i, j);
-          //printf("%d\n",i);
-          //check(general_message[i][j], "gen_msg");
         }
       }
     }
@@ -162,36 +148,28 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
             partial_message_out += former_message[1][i][k] * model(1, EdgeList[i].known, omega[j][k], degrees[EdgeList[i].out], degrees[EdgeList[i].in]);
             partial_message_in += former_message[0][i][k] * model(1, EdgeList[i].known, omega[j][k], degrees[EdgeList[i].in], degrees[EdgeList[i].out]);
 
-            //check(partial_message_out, "partial_message_out");
-            //check(partial_message_in, "partial_message_out");
 
             partial_message_out_denom += group_membership[EdgeList[i].in][k] * model(0, 0., omega[j][k], degrees[EdgeList[i].out], degrees[EdgeList[i].in]);
             partial_message_in_denom += group_membership[EdgeList[i].out][k] * model(0, 0., omega[j][k], degrees[EdgeList[i].in], degrees[EdgeList[i].out]);
 
-            //check(partial_message_out, "partial_message_out_denom");
-            //check(partial_message_in, "partial_message_out_denom");
           }
           // if the denominator is 0, then this means 'out' will never connect to any nodes if it's in community j
           // either because there are no nodes in k or omega[j][k] is 0. we set this to a default value,
           // need to make sure we set it to the same value in the mean field calculation
           if(partial_message_out == 0) {
-            //printf("ERROR3.num");
             partial_message_out = 1;
           }
           if (partial_message_out_denom == 0)
           {
-            //printf("ERROR3");
             partial_message_out_denom = 1;
           }
           general_message[EdgeList[i].out][j] += log(partial_message_out) - log(partial_message_out_denom);
 
           if (partial_message_in == 0) {
-            //printf("ERROR4.num");
             partial_message_in = 1;
           }
           if (partial_message_in_denom == 0)
           {
-            //printf("ERROR4");
             partial_message_in_denom = 1;
           }
           general_message[EdgeList[i].in][j] += log(partial_message_in) - log(partial_message_in_denom);
@@ -228,9 +206,9 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
           partial_message_out_denom += group_membership[i][k] * model(0, 0., omega[j][k], degrees[i], degrees[i]);
         }
         if (partial_message_out_denom == 0)
-        {//printf("ERROR5 %d %f\n",i, degrees[i]);
+        {
           partial_message_out_denom = 1;
-          }
+        }
 
         general_message[i][j] -= log(partial_message_out_denom);
       }
@@ -274,30 +252,12 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
           }
           temp_message1[j] = nKcount[j] / norm1;
           temp_message2[j] = nKcount[j] / norm2;
-          /*if(current_message[0][i][j] <= ERROR) {
-            printf("no way");
-            temp_message1[j] = .5;
-          }
-          else {
-            temp_message1[j] = nKcount[j] / norm1;
-          }
-
-          if(current_message[0][i][j] <= ERROR) {
-            printf("no way");
-            temp_message2[j] = .5;
-          }
-          else {
-            temp_message2[j] = nKcount[j] / norm2;
-          }*/
         }
 
         for (unsigned j = 0; j < communities; j++)
         {
           current_message[0][i][j] = temp_message1[j];
           current_message[1][i][j] = temp_message2[j];
-
-          //check(current_message[0][i][j], "current_message[0]");
-          //check(current_message[1][i][j], "current_message[1]");
 
           if (fabs(current_message[0][i][j] - former_message[0][i][j]) > max_diff)
           {
@@ -349,7 +309,6 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
           group_membership[i][j] = 0;
           set_zero = true;
         }
-        //check(group_membership[i][j], "group_membership");
       }
 
       if (set_zero == true)
@@ -375,21 +334,7 @@ void BP_algorithm(Trio* EdgeList, double** group_membership, double** general_me
   return;
 }
 
-
-
-
-
-
-
-bool Sort_list_probability(Trio& a, Trio& b)
-{
-	if (a.known < b.known)
-	{
-		return false;
-	}
-	return true;
-}
-
+// "Recover" edges. Uses a principled method for combining our posterior probabilities (messages) and our data from the edgelist.
 // current assumption: if original edge probability was 0, we aren't gonna predict an edge.
 void predict_edges(Trio* EdgeList, double*** current_message, double** omega, double* degrees, double (*model)(const int, const double, double&, double&, double&), string out_file_name) {
   ofstream out_file;
@@ -423,15 +368,13 @@ void predict_edges(Trio* EdgeList, double*** current_message, double** omega, do
 
 
 
-
+// Run whole belief propagation algorithm. Output communities to specified file
 int main(int argc, char* argv[])
 {
-  // Likelihood and M-step of the EM algorithm.
-  // Only ever change this line to change the program's behavior. It consistently picks the model.
-  // Right now this is only doing legacy stuff, but it's still needed to compile and I didn't want to change functionality too much.
-  const bool degree_correction = false;
-  // True if the edges are unweighted. This lets you use the mean field approximation for the DCSBM.
+  // True if the edges are unweighted. This lets you use the mean field approximation for the DCSBM. Value of false only allows mean field approximation
+  // for CERTAIN networks, when lines = 2 (no probabilities are given)
   unweighted_degree = false; // THIS IS A GLOBAL VARIABLE
+
   // True if we should run the edge prediction algorithm after running the normal community detection
   const bool predict_edges_flag = false;
 
@@ -442,7 +385,46 @@ int main(int argc, char* argv[])
   double (*MF_Return)(double**, const int&, const int&);
   double (*Compute_Likelihood)(Trio*, double**, double*, double**, double*);
 
-  // If you want the degree corrected version, add the changes here. I had been using the flag "degree_correction" above and an if-then statement here.
+
+  // these are global variables!
+  vertices = 0;
+  edges = 0;
+
+  std::random_device rd;
+  std::mt19937 generator(rd());
+  std::uniform_real_distribution<double> numgen(0.0,1.0);
+
+  // local variables used only in this method
+  bool degree_correction;
+  int restarts, max_iterations, lines;
+  string input_file_name, out_file_name;
+  double converged_diff;
+
+  po::options_description desc("Allowed options");
+  desc.add_options()
+    ("help", "show help")
+    ("input_file,i", po::value<string>(&input_file_name)->default_value(""), "input file containing edge list")
+    ("communities,c", po::value<unsigned>(&communities)->default_value(2), "number of communities to detect")
+    ("lines,l", po::value<int>(&lines)->default_value(2), "number of columns in the edge file. allows one to specify a certain network")
+    ("out_file,o", po::value<string>(&out_file_name)->default_value(""), "file to output communities to")
+    ("degree_correction,d", po::value<bool>(&degree_correction)->default_value(false), "whether to use the degree corrected SBM, for networks with broad dergee distributions")
+    ("EM_restarts,n", po::value<int>(&restarts)->default_value(10),"random restarts of the full EM algorithm")
+    ("EM_max_iterations", po::value<int>(&max_iterations)->default_value(20),"cap on number of EM iterations")
+    ("BP_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(0.001), "BP is considered converged when no message changes by more than this")
+    ("EM_convergence_thresh", po::value<double>(&converged_diff)->default_value(5e-3), "EM is considered converged when no parameter changes by more than this")
+    ("zero_thresh", po::value<double>(&zero_thresh)->default_value(1e-50), "any number below this is considered to be zero");
+
+  po::variables_map vm;
+  po::store(po::parse_command_line(argc, argv, desc), vm);
+  po::notify(vm);
+    
+  /* show help and exit */
+  if (vm.count("help") || input_file_name == "" || out_file_name == "") {
+    cout << desc << "\n";
+    return 1;
+  }
+
+  // This flag changes which methods are used in BP
   if (degree_correction == false)
   {
     model = SBM;
@@ -469,43 +451,6 @@ int main(int argc, char* argv[])
     Compute_Likelihood = LL_DCSBM;
   }
 
-
-
-  // these are global variables!
-  vertices = 0;
-  edges = 0;
-
-  std::random_device rd;
-  std::mt19937 generator(rd());
-  std::uniform_real_distribution<double> numgen(0.0,1.0);
-
-  // local variables used only in this method
-  int restarts, max_iterations, lines;
-  string input_file_name, out_file_name;
-  double converged_diff;
-
-  po::options_description desc("Allowed options");
-  desc.add_options()
-    ("help", "show help")
-    ("input_file,i", po::value<string>(&input_file_name)->default_value(""), "input file containing edge list")
-    ("communities,c", po::value<unsigned>(&communities)->default_value(2), "number of communities to detect")
-    ("lines,l", po::value<int>(&lines)->default_value(2), "number of columns in the edge file. allows one to specify a certain network")
-    ("out_file,o", po::value<string>(&out_file_name)->default_value(""), "file to output communities to")
-    ("EM_restarts,n", po::value<int>(&restarts)->default_value(10),"random restarts of the full EM algorithm")
-    ("EM_max_iterations", po::value<int>(&max_iterations)->default_value(20),"cap on number of EM iterations")
-    ("BP_convergence_thresh", po::value<double>(&message_converged_diff)->default_value(0.001), "BP is considered converged when no message changes by more than this")
-    ("EM_convergence_thresh", po::value<double>(&converged_diff)->default_value(5e-3), "EM is considered converged when no parameter changes by more than this")
-    ("zero_thresh", po::value<double>(&zero_thresh)->default_value(1e-50), "any number below this is considered to be zero");
-
-  po::variables_map vm;
-  po::store(po::parse_command_line(argc, argv, desc), vm);
-  po::notify(vm);
-    
-  /* show help and exit */
-  if (vm.count("help") || input_file_name == "" || out_file_name == "") {
-    cout << desc << "\n";
-    return 1;
-  }
 
   
 

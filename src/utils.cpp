@@ -136,6 +136,7 @@ void GetTheNetworkEdges(string fileName, int lines, Trio* EdgeList, double* degr
     // put a ! here if we want this to be the mean field for the unweighted case
     // no ! means that we will be doing the mean field for the weighted case, by counting actual
     // 		weights even though we've told it not too
+    // We're currently entering this block for any lines > 3
     if (lines > 2 && !unweighted_degree)
     {
       sscanf(buffer, "%ld %ld %f %*s", &entry1, &entry2, &entry3);
