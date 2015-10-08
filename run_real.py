@@ -1,11 +1,12 @@
 #!/usr/bin/python3
 
+# run the belief propagation on a real world edgelist
+
 import sys
 import os
 from optparse import OptionParser
 from multiprocessing import Process
 
-#from utils import *
 
 '''
 trials: number of times to run

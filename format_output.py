@@ -1,7 +1,12 @@
-#!/user/bin/python3
+#!/usr/bin/python3
 
 # Takes in an edgelist and corresponding communities, and
 # outputs a gml file to be read by, for example, Gephi
+
+## For example, when I create plots, I read the gml file into
+## Gephi, color by community using the Partition->Nodes tab,
+## layout using ForceAtlas2, and then tweaking parameters
+## and manually dragging nodes around
 
 import networkx as nx
 import numpy as np
@@ -9,115 +14,57 @@ import sys
 from random import random
 from optparse import OptionParser
 
-comm_count = int(sys.argv[2])
-id_num = int(sys.argv[1])
-
-weighted = (sys.argv[3] == 'True')
-use_old_ordering = True
-only_one_component = False
-cluster_comms = False
-
-downsample_edges = True
-
-cutoff = 0.0
-gml_location_name = None
-gml_location_name = 'out2/' + sys.argv[1] + '.gml'
-
-edgelist = 'edges2/%d.edges'%id_num
-out = 'out2/%d_%d.gml'%(id_num, comm_count)
-#posterior = 'out2/%d_%d_new.txt_posterior.edges' % (id_num, comm_count)
-posterior = edgelist
-comms = 'tem place holder'
-comms = 'out2/%d_%d_new.txt'%(id_num, comm_count)
-
-if weighted == False:
-  edgelist = 'edges2/%d-%f-%r.edges'%(id_num, cutoff, only_one_component)
-  #out = 'out2/%d_%d_%f_%r_un.gml'%(id_num, comm_count, cutoff, only_one_component)
-  # the following two don't do the cutoff, the former two do
-  #edgelist = 'edges2/%d.edges'%(id_num)
-  out = 'out2/%d_%d_%f_%r_un.gml'%(id_num, comm_count, cutoff, only_one_component)
-  comms = 'out/%d_%d_%f_%r.txt'%(id_num, comm_count, cutoff, only_one_component)
-
-out = open(out, 'w+')
-
-G = nx.read_edgelist(edgelist, nodetype = int, data=(('weight',float),))
-
-# convert a file of strings to a list of the community for each vertex
-comm_list = []
-for l in open(comms):
-  split = [float(x) for x in l.split()]
-  comm_list.append((np.argmax(split), max(split)))
-
-def node_to_str(name, comm, size, loc):
-  ret = 'node\n[\nid %d\ncomm %d\ngraphics\n[\nw %f\n'%(name, comm, size)
-  if loc is not None:
-    ret += 'x %f\ny %f\n' % (loc[0], loc[1])
-  ret += ']\n]\n'
-  return ret
-
-
-# takes in dict mapping old names to current names.
-# and a location for each old name, as a dict of tuples
-# and a graph with edge weights
-# and whether the graph is weighted
-# and a list of community tuples: (index of most likely community, likelihood of most likely comm)
-def print_unweighted(old_names, comm_list, G, locs=None, weighted=True, cluster_comms=False):
-  out.write('graph\n[\ndirected 0\n')
-  if downsample_edges:
-    G_post = nx.read_edgelist(posterior, nodetype = int, data = (('weight', float),))
-  for n in G.nodes():
-    if locs is not None:
-      if old_names is not None:
-        loc = locs[old_names[n]]
-      else:
-        loc = locs[n]
+# gives gml strings for nodes
+def node_to_str(name, comm, size, proportional_size=False):
+    if proportional_size:
+        size = size*.7
     else:
-      loc = None
+        size = 20
 
-    out.write(node_to_str(n, comm_list[n][0], comm_list[n][1]*.7, loc))
-  for e in G.edges(data=True):
-    if weighted:
-      if downsample_edges:
-        # make the edge 1 with probability proportional to its weight
-        r = random()
-        if r < G_post[e[0]][e[1]]['weight']:
-          out.write('edge\n[\nsource %d\ntarget %d\nweight %f\n]\n'%(e[0],e[1],1))
-        #else:
-        #  print(r, G_post[e[0]][e[1]]['weight'])
-      else:
-        out.write('edge\n[\nsource %d\ntarget %d\nweight %f\n]\n'%(e[0],e[1],e[2]['weight']))
-    else:
-      out.write('edge\n[\nsource %d\ntarget %d\n]\n'%(e[0],e[1]))
+    ret = 'node\n[\nid %d\ncomm %d\ngraphics\n[\nw %f\n'%(name, comm, size)
+    ret += ']\n]\n'
+    return ret
 
-  if cluster_comms:
-    # add extra edges between nodes in the same community
-    for i in range(len(comm_list)):
-      for j in range(len(comm_list)):
-        if i != j and comm_list[i][0] == comm_list[j][0]:
-          out.write('edge\n[\nsource %d\ntarget %d\nweight %f\n]\n'%(i,j,.1))
-  out.write(']')
+def combine(edgelist, comms, out_file, proportional_size):
+    G = nx.read_edgelist(edgelist, nodetype = int, data=(('weight',float),))
 
-old_names = None
-if not weighted and use_old_ordering:
-  old_names = {}
-  for i, l in enumerate(open('edges2/old-ordering-%d-%f-%r.txt'%(id_num, cutoff, only_one_component))):
-    old_names[i] = int(l)
+    # get the community for each vertex, taken as the max weight in each line
+    comm_list = []
+    for l in open(comms):
+        split = list(map(float,l.split()))
+        comm_list.append((np.argmax(split), max(split)))
+        '''
+        try:
+            print(np.argmax(split), max(split))
+        except Exception:
+            print(l)
+        '''
 
-def extract_locs(gml_file_name):
-  if gml_file_name is None:
-    return None
-  curr_id = None
-  curr_x = None
-  locs = {}
-  for l in open(gml_file_name):
-    if 'label' in l:
-      curr_id = int(float(l.split()[1].replace('"', '')))
-    elif 'x' in l:
-      curr_x = float(l.split()[1])/27
-    elif 'y' in l:
-      curr_y = float(l.split()[1])/27
-      locs[curr_id] = (curr_x, curr_y)
-  return locs
+    #output the graph file
+    out = open(out_file, 'w+')
+    out.write('graph\n[\ndirected 0\n')
 
-print_unweighted(old_names, comm_list, G, extract_locs(gml_location_name), weighted, cluster_comms)
+    # first write nodes and their communities
+    for n in G.nodes():
+        out.write(node_to_str(n, comm_list[n][0], comm_list[n][1], proportional_size))
 
+    # then write the edges
+    for e in G.edges(data=True):
+        if len(e) == 3 and 'weight' in e[2]:
+            out.write('edge\n[\nsource %d\ntarget %d\nweight %f\n]\n'%(e[0],e[1],e[2]['weight']))
+        else:
+            out.write('edge\n[\nsource %d\ntarget %d\n\n]\n'%(e[0],e[1]))
+
+    out.write(']')
+
+if __name__ == '__main__':
+    # parse command line options
+    parser = OptionParser()
+    parser.add_option('-i', type=str, dest = 'edgelist', help='input file edgelist', default='data/protein.edges')
+    parser.add_option('-c', type=str, dest = 'comms', help='input communities (output from bp algorithm)', default='out/protein.out')
+    parser.add_option('-o', type=str, dest = 'out_file', help='output file, containing vertices and their communities in gml format', default='out/protein.gml')
+    parser.add_option('-s', action='store_true', dest='proportional_size', help='flag to make node size proportional to its community membership', default=False)
+
+    (options, _) = parser.parse_args()
+
+    combine(options.edgelist, options.comms, options.out_file, options.proportional_size)
