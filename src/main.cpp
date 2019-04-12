@@ -13,6 +13,7 @@
 #include <list>
 #include <limits>
 #include <fstream>
+#include <random>
 #include "math.h"
 #include <boost/program_options.hpp>
 #include "SBM.h"
